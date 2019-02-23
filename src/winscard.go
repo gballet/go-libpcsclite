@@ -107,3 +107,67 @@ func (client *PCSCDClient) SCardEstablishContext(scope uint32) error {
 
 	return nil
 }
+
+// Constants related to the reader state structure
+const (
+	ReaderStateNameLength       = 128
+	ReaderStateMaxAtrSizeLength = 33
+	ReaderStateDescriptorLength = ReaderStateNameLength + ReaderStateMaxAtrSizeLength + 5*4
+
+	MaxReaderStateDescriptors = 16
+)
+
+type readerState struct {
+	name          string /* reader name */
+	eventCounter  uint32 /* number of card events */
+	readerState   uint32 /* SCARD_* bit field */
+	readerSharing uint32 /* PCSCLITE_SHARING_* sharing status */
+
+	cardAtr       []byte /* ATR */
+	cardAtrLength uint32 /* ATR length */
+	cardProtocol  uint32 /* SCARD_PROTOCOL_* value */
+}
+
+func getReaderState(data []byte) (readerState, error) {
+	ret := readerState{}
+	if len(data) < ReaderStateDescriptorLength {
+		return ret, fmt.Errorf("could not unmarshall data of length %d < %d", len(data), ReaderStateDescriptorLength)
+	}
+
+	ret.name = string(data[:ReaderStateNameLength])
+	ret.eventCounter = binary.LittleEndian.Uint32(data[ReaderStateNameLength:])
+	ret.readerState = binary.LittleEndian.Uint32(data[ReaderStateNameLength+4:])
+	ret.readerSharing = binary.LittleEndian.Uint32(data[ReaderStateNameLength+8:])
+	ret.cardAtr = make([]byte, ReaderStateMaxAtrSizeLength)
+	copy(ret.cardAtr, data[ReaderStateNameLength+12:ReaderStateNameLength+12+ReaderStateMaxAtrSizeLength])
+	ret.cardAtrLength = binary.LittleEndian.Uint32(data[ReaderStateNameLength+12+ReaderStateMaxAtrSizeLength:])
+	ret.cardProtocol = binary.LittleEndian.Uint32(data[ReaderStateNameLength+16+ReaderStateMaxAtrSizeLength:])
+
+	return ret, nil
+}
+
+// SCardListReaders gets the list of readers from the daemon
+func (client *PCSCDClient) SCardListReaders() error {
+	err := messageSendWithHeader(CommandGetReaderState, client.conn, []byte{})
+	if err != nil {
+		return err
+	}
+	response := make([]byte, ReaderStateDescriptorLength*MaxReaderStateDescriptors)
+	n, err := client.conn.Read(response)
+	if err != nil {
+		return err
+	}
+	if n != len(response) {
+		return fmt.Errorf("invalid response length: expected %d, got %d", len(response), n)
+	}
+
+	for i := range client.readerStateDescriptors {
+		desc, err := getReaderState(response[i*ReaderStateDescriptorLength:])
+		if err != nil {
+			return err
+		}
+		client.readerStateDescriptors[i] = desc
+	}
+
+	return nil
+}
