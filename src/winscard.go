@@ -34,6 +34,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"net"
+	"unsafe"
 )
 
 type PCSCDClient struct {
@@ -43,6 +44,8 @@ type PCSCDClient struct {
 	major uint32
 
 	ctx uint32
+
+	readerStateDescriptors [MaxReaderStateDescriptors]readerState
 }
 
 func New() *PCSCDClient {
@@ -108,15 +111,6 @@ func (client *PCSCDClient) SCardEstablishContext(scope uint32) error {
 	return nil
 }
 
-// Constants related to the reader state structure
-const (
-	ReaderStateNameLength       = 128
-	ReaderStateMaxAtrSizeLength = 33
-	ReaderStateDescriptorLength = ReaderStateNameLength + ReaderStateMaxAtrSizeLength + 5*4
-
-	MaxReaderStateDescriptors = 16
-)
-
 type readerState struct {
 	name          string /* reader name */
 	eventCounter  uint32 /* number of card events */
@@ -128,6 +122,15 @@ type readerState struct {
 	cardProtocol  uint32 /* SCARD_PROTOCOL_* value */
 }
 
+// Constants related to the reader state structure
+const (
+	ReaderStateNameLength       = 128
+	ReaderStateMaxAtrSizeLength = 33
+	ReaderStateDescriptorLength = ReaderStateNameLength + ReaderStateMaxAtrSizeLength + 5*4
+
+	MaxReaderStateDescriptors = 16
+)
+
 func getReaderState(data []byte) (readerState, error) {
 	ret := readerState{}
 	if len(data) < ReaderStateDescriptorLength {
@@ -135,13 +138,13 @@ func getReaderState(data []byte) (readerState, error) {
 	}
 
 	ret.name = string(data[:ReaderStateNameLength])
-	ret.eventCounter = binary.LittleEndian.Uint32(data[ReaderStateNameLength:])
-	ret.readerState = binary.LittleEndian.Uint32(data[ReaderStateNameLength+4:])
-	ret.readerSharing = binary.LittleEndian.Uint32(data[ReaderStateNameLength+8:])
+	ret.eventCounter = binary.LittleEndian.Uint32(data[unsafe.Offsetof(ret.eventCounter):])
+	ret.readerState = binary.LittleEndian.Uint32(data[unsafe.Offsetof(ret.readerState):])
+	ret.readerSharing = binary.LittleEndian.Uint32(data[unsafe.Offsetof(ret.readerSharing):])
 	ret.cardAtr = make([]byte, ReaderStateMaxAtrSizeLength)
-	copy(ret.cardAtr, data[ReaderStateNameLength+12:ReaderStateNameLength+12+ReaderStateMaxAtrSizeLength])
-	ret.cardAtrLength = binary.LittleEndian.Uint32(data[ReaderStateNameLength+12+ReaderStateMaxAtrSizeLength:])
-	ret.cardProtocol = binary.LittleEndian.Uint32(data[ReaderStateNameLength+16+ReaderStateMaxAtrSizeLength:])
+	copy(ret.cardAtr, data[unsafe.Offsetof(ret.cardAtr):unsafe.Offsetof(ret.cardAtr)+ReaderStateMaxAtrSizeLength])
+	ret.cardAtrLength = binary.LittleEndian.Uint32(data[unsafe.Offsetof(ret.cardAtrLength):])
+	ret.cardProtocol = binary.LittleEndian.Uint32(data[unsafe.Offsetof(ret.cardProtocol):])
 
 	return ret, nil
 }
@@ -153,12 +156,13 @@ func (client *PCSCDClient) SCardListReaders() error {
 		return err
 	}
 	response := make([]byte, ReaderStateDescriptorLength*MaxReaderStateDescriptors)
-	n, err := client.conn.Read(response)
-	if err != nil {
-		return err
-	}
-	if n != len(response) {
-		return fmt.Errorf("invalid response length: expected %d, got %d", len(response), n)
+	total := 0
+	for total < len(response) {
+		n, err := client.conn.Read(response)
+		if err != nil {
+			return err
+		}
+		total += n
 	}
 
 	for i := range client.readerStateDescriptors {
