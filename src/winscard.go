@@ -111,25 +111,51 @@ func (client *PCSCDClient) SCardEstablishContext(scope uint32) error {
 	return nil
 }
 
-type readerState struct {
-	name          string /* reader name */
-	eventCounter  uint32 /* number of card events */
-	readerState   uint32 /* SCARD_* bit field */
-	readerSharing uint32 /* PCSCLITE_SHARING_* sharing status */
+func (client *PCSCDClient) SCardReleaseContext() error {
+	data := [8]byte{}
+	binary.LittleEndian.PutUint32(data[:], client.ctx)
+	binary.LittleEndian.PutUint32(data[4:], SCardSuccess)
+	err := messageSendWithHeader(SCardReleaseContext, client.conn, data[:])
+	if err != nil {
+		return err
+	}
+	total := 0
+	for total < len(data) {
+		n, err := client.conn.Read(data[total:])
+		if err != nil {
+			return err
+		}
+		total += n
+	}
+	code := binary.LittleEndian.Uint32(data[4:])
+	if code != SCardSuccess {
+		return fmt.Errorf("invalid return code: %x", code)
+	}
 
-	cardAtr       []byte /* ATR */
-	cardAtrLength uint32 /* ATR length */
-	cardProtocol  uint32 /* SCARD_PROTOCOL_* value */
+	return nil
 }
 
 // Constants related to the reader state structure
 const (
 	ReaderStateNameLength       = 128
 	ReaderStateMaxAtrSizeLength = 33
-	ReaderStateDescriptorLength = ReaderStateNameLength + ReaderStateMaxAtrSizeLength + 5*4
+	// NOTE: ATR is 32-byte aligned in the C version, which means it's
+	// actually 36 byte long and not 33.
+	ReaderStateDescriptorLength = ReaderStateNameLength + ReaderStateMaxAtrSizeLength + 5*4 + 3
 
 	MaxReaderStateDescriptors = 16
 )
+
+type readerState struct {
+	name          string /* reader name */
+	eventCounter  uint32 /* number of card events */
+	readerState   uint32 /* SCARD_* bit field */
+	readerSharing uint32 /* PCSCLITE_SHARING_* sharing status */
+
+	cardAtr       [ReaderStateMaxAtrSizeLength]byte /* ATR */
+	cardAtrLength uint32                            /* ATR length */
+	cardProtocol  uint32                            /* SCARD_PROTOCOL_* value */
+}
 
 func getReaderState(data []byte) (readerState, error) {
 	ret := readerState{}
@@ -141,8 +167,7 @@ func getReaderState(data []byte) (readerState, error) {
 	ret.eventCounter = binary.LittleEndian.Uint32(data[unsafe.Offsetof(ret.eventCounter):])
 	ret.readerState = binary.LittleEndian.Uint32(data[unsafe.Offsetof(ret.readerState):])
 	ret.readerSharing = binary.LittleEndian.Uint32(data[unsafe.Offsetof(ret.readerSharing):])
-	ret.cardAtr = make([]byte, ReaderStateMaxAtrSizeLength)
-	copy(ret.cardAtr, data[unsafe.Offsetof(ret.cardAtr):unsafe.Offsetof(ret.cardAtr)+ReaderStateMaxAtrSizeLength])
+	copy(ret.cardAtr[:], data[unsafe.Offsetof(ret.cardAtr):unsafe.Offsetof(ret.cardAtr)+ReaderStateMaxAtrSizeLength])
 	ret.cardAtrLength = binary.LittleEndian.Uint32(data[unsafe.Offsetof(ret.cardAtrLength):])
 	ret.cardProtocol = binary.LittleEndian.Uint32(data[unsafe.Offsetof(ret.cardProtocol):])
 
@@ -158,7 +183,7 @@ func (client *PCSCDClient) SCardListReaders() error {
 	response := make([]byte, ReaderStateDescriptorLength*MaxReaderStateDescriptors)
 	total := 0
 	for total < len(response) {
-		n, err := client.conn.Read(response)
+		n, err := client.conn.Read(response[total:])
 		if err != nil {
 			return err
 		}
