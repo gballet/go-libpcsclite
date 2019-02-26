@@ -32,6 +32,31 @@ package pcsc
 
 const (
 	SCardSuccess                   = 0x00000000 /* No error was encountered. */
+	SCardProtocolUndefined = 0x0000                 /* protocol not set */
+	SCardProtocolUnSet     = SCardProtocolUndefined /* backward compat */
+	SCardProtocolT0        = 0x0001                 /* T=0 active protocol. */
+	SCardProtocolT1        = 0x0002                 /* T=1 active protocol. */
+	SCardProtocolRaw       = 0x0004                 /* Raw active protocol. */
+	SCardProtocolT15       = 0x0008                 /* T=15 protocol. */
+
+	SCardProtocolAny = (SCardProtocolT0 | SCardProtocolT1) /* IFD determines prot. */
+
+	SCardShareExclusive = 0x0001 /* Exclusive mode only */
+	SCardShareShared    = 0x0002 /* Shared mode only */
+	SCardShareDirect    = 0x0003 /* Raw mode only */
+
+	SCardLeaveCard   = 0x0000 /* Do nothing on close */
+	SCardResetCard   = 0x0001 /* Reset on close */
+	SCardUnpowerCard = 0x0002 /* Power down on close */
+	SCardEjectCard   = 0x0003 /* Eject on close */
+
+	SCardUnknown    = 0x0001 /* Unknown state */
+	SCardAbsent     = 0x0002 /* Card is absent */
+	SCardPresent    = 0x0004 /* Card is present */
+	SCardSwallowed  = 0x0008 /* Card not powered */
+	SCardPowever    = 0x0010 /* Card is powered */
+	SCardNegotiable = 0x0020 /* Ready for PTS */
+	SCardSpecific   = 0x0040 /* PTS has been set */
 
 	PCSCDSockName = "/run/pcscd/pcscd.comm"
 )

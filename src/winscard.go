@@ -197,6 +197,52 @@ func (client *PCSCDClient) SCardListReaders() error {
 		}
 		client.readerStateDescriptors[i] = desc
 	}
+const (
+	SCardConnectReaderNameOffset        = 4
+	SCardConnectShareModeOffset         = SCardConnectReaderNameOffset + ReaderStateNameLength
+	SCardConnectPreferredProtocolOffset = SCardConnectShareModeOffset + 4
+	SCardConnectReturnValueOffset       = SCardConnectPreferredProtocolOffset + 12
+)
+
+// Card represents the connection to a card
+type Card struct {
+	handle      uint32
+	activeProto uint32
+	client      *PCSCDClient
+}
+
+// SCardConnect asks the daemon to connect to the card
+func (client *PCSCDClient) SCardConnect(name string, shareMode uint32, preferredProtocol uint32) (*Card, error) {
+	request := make([]byte, ReaderStateNameLength+4*6)
+	binary.LittleEndian.PutUint32(request, client.ctx)
+	copy(request[SCardConnectReaderNameOffset:], []byte(name))
+	binary.LittleEndian.PutUint32(request[SCardConnectShareModeOffset:], shareMode)
+	binary.LittleEndian.PutUint32(request[SCardConnectPreferredProtocolOffset:], preferredProtocol)
+	binary.LittleEndian.PutUint32(request[SCardConnectReturnValueOffset:], SCardSuccess)
+
+	err := messageSendWithHeader(SCardConnect, client.conn, request)
+	if err != nil {
+		return nil, err
+	}
+	response := make([]byte, ReaderStateNameLength+4*6)
+	total := 0
+	for total < len(response) {
+		n, err := client.conn.Read(response[total:])
+		if err != nil {
+			return nil, err
+		}
+		fmt.Println("total, n", total, n, response)
+		total += n
+	}
+	code := binary.LittleEndian.Uint32(response[148:])
+	if code != SCardSuccess {
+		return nil, fmt.Errorf("invalid return code: %x", code)
+	}
+	handle := binary.LittleEndian.Uint32(response[140:])
+	active := binary.LittleEndian.Uint32(response[SCardConnectPreferredProtocolOffset:])
+
+	return &Card{handle: handle, activeProto: active, client: client}, nil
+}
 
 	return nil
 }
