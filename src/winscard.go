@@ -197,6 +197,10 @@ func (client *PCSCDClient) SCardListReaders() error {
 		}
 		client.readerStateDescriptors[i] = desc
 	}
+
+	return nil
+}
+
 const (
 	SCardConnectReaderNameOffset        = 4
 	SCardConnectShareModeOffset         = SCardConnectReaderNameOffset + ReaderStateNameLength
@@ -243,6 +247,33 @@ func (client *PCSCDClient) SCardConnect(name string, shareMode uint32, preferred
 
 	return &Card{handle: handle, activeProto: active, client: client}, nil
 }
+
+type SCardIoRequest struct {
+	proto  uint32
+	length uint32
+}
+
+func (card *Card) Disconnect(disposition uint32) error {
+	data := [12]byte{}
+	binary.LittleEndian.PutUint32(data[:], card.handle)
+	binary.LittleEndian.PutUint32(data[4:], disposition)
+	binary.LittleEndian.PutUint32(data[8:], SCardSuccess)
+	err := messageSendWithHeader(SCardDisConnect, card.client.conn, data[:])
+	if err != nil {
+		return err
+	}
+	total := 0
+	for total < len(data) {
+		n, err := card.client.conn.Read(data[total:])
+		if err != nil {
+			return err
+		}
+		total += n
+	}
+	code := binary.LittleEndian.Uint32(data[8:])
+	if code != SCardSuccess {
+		return fmt.Errorf("invalid return code: %x", code)
+	}
 
 	return nil
 }
