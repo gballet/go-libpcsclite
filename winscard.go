@@ -37,7 +37,9 @@ import (
 	"unsafe"
 )
 
-type PCSCDClient struct {
+// Client contains all the information needed to establish
+// and maintain a connection to the deamon/card.
+type Client struct {
 	conn net.Conn
 
 	minor uint32
@@ -45,14 +47,17 @@ type PCSCDClient struct {
 
 	ctx uint32
 
-	readerStateDescriptors [MaxReaderStateDescriptors]readerState
+	readerStateDescriptors [MaxReaderStateDescriptors]ReaderState
 }
 
-func New() *PCSCDClient {
-	return &PCSCDClient{}
+// New creates a new PCSC daemon client
+func New() *Client {
+	return &Client{}
 }
 
-func (client *PCSCDClient) SCardEstablishContext(scope uint32) error {
+// SCardEstablishContext asks the PCSC daemon to create a context
+// handle for further communication with connected cards and readers.
+func (client *Client) SCardEstablishContext(scope uint32) error {
 	conn, err := clientSetupSession()
 	if err != nil {
 		return err
@@ -111,7 +116,9 @@ func (client *PCSCDClient) SCardEstablishContext(scope uint32) error {
 	return nil
 }
 
-func (client *PCSCDClient) SCardReleaseContext() error {
+// SCardReleaseContext tells the daemon that the client will no longer
+// need the context.
+func (client *Client) SCardReleaseContext() error {
 	data := [8]byte{}
 	binary.LittleEndian.PutUint32(data[:], client.ctx)
 	binary.LittleEndian.PutUint32(data[4:], SCardSuccess)
@@ -146,7 +153,9 @@ const (
 	MaxReaderStateDescriptors = 16
 )
 
-type readerState struct {
+// ReaderState represent the state of a single reader, as reported
+// by the PCSC daemon.
+type ReaderState struct {
 	name          string /* reader name */
 	eventCounter  uint32 /* number of card events */
 	readerState   uint32 /* SCARD_* bit field */
@@ -157,8 +166,8 @@ type readerState struct {
 	cardProtocol  uint32                            /* SCARD_PROTOCOL_* value */
 }
 
-func getReaderState(data []byte) (readerState, error) {
-	ret := readerState{}
+func getReaderState(data []byte) (ReaderState, error) {
+	ret := ReaderState{}
 	if len(data) < ReaderStateDescriptorLength {
 		return ret, fmt.Errorf("could not unmarshall data of length %d < %d", len(data), ReaderStateDescriptorLength)
 	}
@@ -175,17 +184,17 @@ func getReaderState(data []byte) (readerState, error) {
 }
 
 // SCardListReaders gets the list of readers from the daemon
-func (client *PCSCDClient) SCardListReaders() error {
+func (client *Client) SCardListReaders() ([]ReaderState, error) {
 	err := messageSendWithHeader(CommandGetReaderState, client.conn, []byte{})
 	if err != nil {
-		return err
+		return nil, err
 	}
 	response := make([]byte, ReaderStateDescriptorLength*MaxReaderStateDescriptors)
 	total := 0
 	for total < len(response) {
 		n, err := client.conn.Read(response[total:])
 		if err != nil {
-			return err
+			return nil, err
 		}
 		total += n
 	}
@@ -193,14 +202,15 @@ func (client *PCSCDClient) SCardListReaders() error {
 	for i := range client.readerStateDescriptors {
 		desc, err := getReaderState(response[i*ReaderStateDescriptorLength:])
 		if err != nil {
-			return err
+			return nil, err
 		}
 		client.readerStateDescriptors[i] = desc
 	}
 
-	return nil
+	return client.readerStateDescriptors[:], nil
 }
 
+// Offsets into the Connect request/response packet
 const (
 	SCardConnectReaderNameOffset        = 4
 	SCardConnectShareModeOffset         = SCardConnectReaderNameOffset + ReaderStateNameLength
@@ -212,11 +222,11 @@ const (
 type Card struct {
 	handle      uint32
 	activeProto uint32
-	client      *PCSCDClient
+	client      *Client
 }
 
 // SCardConnect asks the daemon to connect to the card
-func (client *PCSCDClient) SCardConnect(name string, shareMode uint32, preferredProtocol uint32) (*Card, error) {
+func (client *Client) SCardConnect(name string, shareMode uint32, preferredProtocol uint32) (*Card, error) {
 	request := make([]byte, ReaderStateNameLength+4*6)
 	binary.LittleEndian.PutUint32(request, client.ctx)
 	copy(request[SCardConnectReaderNameOffset:], []byte(name))
@@ -264,6 +274,7 @@ type transmit struct {
 	rv                uint32
 }
 
+// SCardIoRequest contains the info needed for performing an IO request
 type SCardIoRequest struct {
 	proto  uint32
 	length uint32
@@ -273,6 +284,7 @@ const (
 	TransmitRequestLength = 32
 )
 
+// Transmit sends request data to a card and returns the response
 func (card *Card) Transmit(adpu []byte) ([]byte, *SCardIoRequest, error) {
 	request := [TransmitRequestLength]byte{}
 	binary.LittleEndian.PutUint32(request[:], card.handle)
@@ -328,6 +340,8 @@ func (card *Card) Transmit(adpu []byte) ([]byte, *SCardIoRequest, error) {
 	return recvData, recv, nil
 }
 
+// Disconnect tells the PCSC daemon that the client is no longer
+// interested in communicating with the card.
 func (card *Card) Disconnect(disposition uint32) error {
 	data := [12]byte{}
 	binary.LittleEndian.PutUint32(data[:], card.handle)
