@@ -50,17 +50,15 @@ type Client struct {
 	readerStateDescriptors [MaxReaderStateDescriptors]ReaderState
 }
 
-// New creates a new PCSC daemon client
-func New() *Client {
-	return &Client{}
-}
+// EstablishContext asks the PCSC daemon to create a context
+// handle for further communication with connected cards and
+// readers.
+func EstablishContext(scope uint32) (*Client, error) {
+	client := &Client{}
 
-// SCardEstablishContext asks the PCSC daemon to create a context
-// handle for further communication with connected cards and readers.
-func (client *Client) SCardEstablishContext(scope uint32) error {
 	conn, err := clientSetupSession()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	client.conn = conn
 
@@ -71,24 +69,24 @@ func (client *Client) SCardEstablishContext(scope uint32) error {
 	binary.LittleEndian.PutUint32(payload[8:], SCardSuccess)
 	err = messageSendWithHeader(CommandVersion, conn, payload)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	response := make([]byte, 12)
 	n, err := conn.Read(response)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if n != len(response) {
-		return fmt.Errorf("invalid response length: expected %d, got %d", len(response), n)
+		return nil, fmt.Errorf("invalid response length: expected %d, got %d", len(response), n)
 	}
 	code := binary.LittleEndian.Uint32(response[8:])
 	if code != SCardSuccess {
-		return fmt.Errorf("invalid response code: expected %d, got %d", SCardSuccess, code)
+		return nil, fmt.Errorf("invalid response code: expected %d, got %d", SCardSuccess, code)
 	}
 	client.major = binary.LittleEndian.Uint32(response)
 	client.minor = binary.LittleEndian.Uint32(response[4:])
 	if client.major != ProtocolVersionMajor || client.minor != ProtocolVersionMinor {
-		return fmt.Errorf("invalid version found: expected %d.%d, got %d.%d", ProtocolVersionMajor, ProtocolVersionMinor, client.major, client.minor)
+		return nil, fmt.Errorf("invalid version found: expected %d.%d, got %d.%d", ProtocolVersionMajor, ProtocolVersionMinor, client.major, client.minor)
 	}
 
 	/* Establish the context proper */
@@ -97,28 +95,28 @@ func (client *Client) SCardEstablishContext(scope uint32) error {
 	binary.LittleEndian.PutUint32(payload[8:], SCardSuccess)
 	err = messageSendWithHeader(SCardEstablishContext, conn, payload)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	response = make([]byte, 12)
 	n, err = conn.Read(response)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if n != len(response) {
-		return fmt.Errorf("invalid response length: expected %d, got %d", len(response), n)
+		return nil, fmt.Errorf("invalid response length: expected %d, got %d", len(response), n)
 	}
 	code = binary.LittleEndian.Uint32(response[8:])
 	if code != SCardSuccess {
-		return fmt.Errorf("invalid response code: expected %d, got %d", SCardSuccess, code)
+		return nil, fmt.Errorf("invalid response code: expected %d, got %d", SCardSuccess, code)
 	}
 	client.ctx = binary.LittleEndian.Uint32(response[4:])
 
-	return nil
+	return client, nil
 }
 
-// SCardReleaseContext tells the daemon that the client will no longer
+// ReleaseContext tells the daemon that the client will no longer
 // need the context.
-func (client *Client) SCardReleaseContext() error {
+func (client *Client) ReleaseContext() error {
 	data := [8]byte{}
 	binary.LittleEndian.PutUint32(data[:], client.ctx)
 	binary.LittleEndian.PutUint32(data[4:], SCardSuccess)
@@ -156,7 +154,7 @@ const (
 // ReaderState represent the state of a single reader, as reported
 // by the PCSC daemon.
 type ReaderState struct {
-	name          string /* reader name */
+	Name          string /* reader name */
 	eventCounter  uint32 /* number of card events */
 	readerState   uint32 /* SCARD_* bit field */
 	readerSharing uint32 /* PCSCLITE_SHARING_* sharing status */
@@ -172,7 +170,7 @@ func getReaderState(data []byte) (ReaderState, error) {
 		return ret, fmt.Errorf("could not unmarshall data of length %d < %d", len(data), ReaderStateDescriptorLength)
 	}
 
-	ret.name = string(data[:ReaderStateNameLength])
+	ret.Name = string(data[:ReaderStateNameLength])
 	ret.eventCounter = binary.LittleEndian.Uint32(data[unsafe.Offsetof(ret.eventCounter):])
 	ret.readerState = binary.LittleEndian.Uint32(data[unsafe.Offsetof(ret.readerState):])
 	ret.readerSharing = binary.LittleEndian.Uint32(data[unsafe.Offsetof(ret.readerSharing):])
@@ -183,8 +181,8 @@ func getReaderState(data []byte) (ReaderState, error) {
 	return ret, nil
 }
 
-// SCardListReaders gets the list of readers from the daemon
-func (client *Client) SCardListReaders() ([]ReaderState, error) {
+// ListReaders gets the list of readers from the daemon
+func (client *Client) ListReaders() ([]string, error) {
 	err := messageSendWithHeader(CommandGetReaderState, client.conn, []byte{})
 	if err != nil {
 		return nil, err
@@ -199,15 +197,17 @@ func (client *Client) SCardListReaders() ([]ReaderState, error) {
 		total += n
 	}
 
+	var names []string
 	for i := range client.readerStateDescriptors {
 		desc, err := getReaderState(response[i*ReaderStateDescriptorLength:])
 		if err != nil {
 			return nil, err
 		}
 		client.readerStateDescriptors[i] = desc
+		names = append(names, desc.Name)
 	}
 
-	return client.readerStateDescriptors[:], nil
+	return names, nil
 }
 
 // Offsets into the Connect request/response packet
@@ -225,8 +225,8 @@ type Card struct {
 	client      *Client
 }
 
-// SCardConnect asks the daemon to connect to the card
-func (client *Client) SCardConnect(name string, shareMode uint32, preferredProtocol uint32) (*Card, error) {
+// Connect asks the daemon to connect to the card
+func (client *Client) Connect(name string, shareMode uint32, preferredProtocol uint32) (*Card, error) {
 	request := make([]byte, ReaderStateNameLength+4*6)
 	binary.LittleEndian.PutUint32(request, client.ctx)
 	copy(request[SCardConnectReaderNameOffset:], []byte(name))

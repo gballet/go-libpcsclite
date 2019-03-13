@@ -32,23 +32,29 @@ package pcsc
 
 const (
 	SCardSuccess                   = 0x00000000 /* No error was encountered. */
-	SCardProtocolUndefined = 0x0000                 /* protocol not set */
-	SCardProtocolUnSet     = SCardProtocolUndefined /* backward compat */
-	SCardProtocolT0        = 0x0001                 /* T=0 active protocol. */
-	SCardProtocolT1        = 0x0002                 /* T=1 active protocol. */
-	SCardProtocolRaw       = 0x0004                 /* Raw active protocol. */
-	SCardProtocolT15       = 0x0008                 /* T=15 protocol. */
 
-	SCardProtocolAny = (SCardProtocolT0 | SCardProtocolT1) /* IFD determines prot. */
+	AutoAllocate  = -1     /* see SCardFreeMemory() */
+	ScopeUser     = 0x0000 /* Scope in user space */
+	ScopeTerminal = 0x0001 /* Scope in terminal */
+	ScopeSystem   = 0x0002 /* Scope in system */
+	ScopeGlobal   = 0x0003 /* Scope is global */
 
-	SCardShareExclusive = 0x0001 /* Exclusive mode only */
-	SCardShareShared    = 0x0002 /* Shared mode only */
-	SCardShareDirect    = 0x0003 /* Raw mode only */
+	ProtocolUndefined = 0x0000                    /* protocol not set */
+	ProtocolUnSet     = ProtocolUndefined         /* backward compat */
+	ProtocolT0        = 0x0001                    /* T=0 active protocol. */
+	ProtocolT1        = 0x0002                    /* T=1 active protocol. */
+	ProtocolRaw       = 0x0004                    /* Raw active protocol. */
+	ProtocolT15       = 0x0008                    /* T=15 protocol. */
+	ProtocolAny       = (ProtocolT0 | ProtocolT1) /* IFD determines prot. */
 
-	SCardLeaveCard   = 0x0000 /* Do nothing on close */
-	SCardResetCard   = 0x0001 /* Reset on close */
-	SCardUnpowerCard = 0x0002 /* Power down on close */
-	SCardEjectCard   = 0x0003 /* Eject on close */
+	ShareExclusive = 0x0001 /* Exclusive mode only */
+	ShareShared    = 0x0002 /* Shared mode only */
+	ShareDirect    = 0x0003 /* Raw mode only */
+
+	LeaveCard   = 0x0000 /* Do nothing on close */
+	ResetCard   = 0x0001 /* Reset on close */
+	UnpowerCard = 0x0002 /* Power down on close */
+	EjectCard   = 0x0003 /* Eject on close */
 
 	SCardUnknown    = 0x0001 /* Unknown state */
 	SCardAbsent     = 0x0002 /* Card is absent */
