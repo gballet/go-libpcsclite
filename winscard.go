@@ -248,9 +248,84 @@ func (client *PCSCDClient) SCardConnect(name string, shareMode uint32, preferred
 	return &Card{handle: handle, activeProto: active, client: client}, nil
 }
 
+/**
+* @brief contained in \ref SCARD_TRANSMIT Messages.
+*
+* These data are passed throw the field \c sharedSegmentMsg.data.
+ */
+type transmit struct {
+	hCard             uint32
+	ioSendPciProtocol uint32
+	ioSendPciLength   uint32
+	cbSendLength      uint32
+	ioRecvPciProtocol uint32
+	ioRecvPciLength   uint32
+	pcbRecvLength     uint32
+	rv                uint32
+}
+
 type SCardIoRequest struct {
 	proto  uint32
 	length uint32
+}
+
+const (
+	TransmitRequestLength = 32
+)
+
+func (card *Card) Transmit(adpu []byte) ([]byte, *SCardIoRequest, error) {
+	request := [TransmitRequestLength]byte{}
+	binary.LittleEndian.PutUint32(request[:], card.handle)
+	binary.LittleEndian.PutUint32(request[4:] /*card.activeProto*/, 2)
+	binary.LittleEndian.PutUint32(request[8:], 8)
+	binary.LittleEndian.PutUint32(request[12:], uint32(len(adpu)))
+	binary.LittleEndian.PutUint32(request[16:], 0)
+	binary.LittleEndian.PutUint32(request[20:], 0)
+	binary.LittleEndian.PutUint32(request[24:], 0x10000)
+	binary.LittleEndian.PutUint32(request[28:], SCardSuccess)
+	err := messageSendWithHeader(SCardTransmit, card.client.conn, request[:])
+	if err != nil {
+		return nil, nil, err
+	}
+	// Add the ADPU payload after the transmit descriptor
+	n, err := card.client.conn.Write(adpu)
+	if err != nil {
+		return nil, nil, err
+	}
+	if n != len(adpu) {
+		return nil, nil, fmt.Errorf("Invalid number of bytes written: expected %d, got %d", len(adpu), n)
+	}
+	response := [TransmitRequestLength]byte{}
+	total := 0
+	for total < len(response) {
+		n, err = card.client.conn.Read(response[total:])
+		if err != nil {
+			return nil, nil, err
+		}
+		total += n
+	}
+
+	code := binary.LittleEndian.Uint32(response[28:])
+	if code != SCardSuccess {
+		return nil, nil, fmt.Errorf("invalid return code: %x", code)
+	}
+
+	// Recover the response data
+	recvProto := binary.LittleEndian.Uint32(response[16:])
+	recvLength := binary.LittleEndian.Uint32(response[20:])
+	recv := &SCardIoRequest{proto: recvProto, length: recvLength}
+	recvLength = binary.LittleEndian.Uint32(response[24:])
+	recvData := make([]byte, recvLength)
+	total = 0
+	for uint32(total) < recvLength {
+		n, err := card.client.conn.Read(recvData[total:])
+		if err != nil {
+			return nil, nil, err
+		}
+		total += n
+	}
+
+	return recvData, recv, nil
 }
 
 func (card *Card) Disconnect(disposition uint32) error {
