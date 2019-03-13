@@ -32,7 +32,6 @@ package pcsc
 
 import (
 	"encoding/binary"
-	"fmt"
 	"net"
 )
 
