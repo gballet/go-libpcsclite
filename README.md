@@ -17,7 +17,7 @@ TODO
 ## TODO
 
   - [ ] Finish this README
-  - [ ] Lock context
+  - [x] Lock context
   - [ ] implement missing functions
 
 ## License
