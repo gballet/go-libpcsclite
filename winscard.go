@@ -213,6 +213,9 @@ func (client *Client) ListReaders() ([]string, error) {
 			return nil, err
 		}
 		client.readerStateDescriptors[i] = desc
+		if desc.Name[0] == 0 {
+			break
+		}
 		names = append(names, desc.Name)
 	}
 
