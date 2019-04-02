@@ -65,30 +65,43 @@ func EstablishContext(scope uint32) (*Client, error) {
 	}
 	client.conn = conn
 
-	/* Exchange version information */
 	payload := make([]byte, 12)
-	binary.LittleEndian.PutUint32(payload, ProtocolVersionMajor)
-	binary.LittleEndian.PutUint32(payload[4:], ProtocolVersionMinor)
-	binary.LittleEndian.PutUint32(payload[8:], SCardSuccess)
-	err = messageSendWithHeader(CommandVersion, conn, payload)
-	if err != nil {
-		return nil, err
-	}
 	response := make([]byte, 12)
-	n, err := conn.Read(response)
-	if err != nil {
-		return nil, err
+
+	var code uint32
+	var minor uint32
+	for minor = ProtocolVersionMinor; minor <= ProtocolVersionMinor+1; minor++ {
+		/* Exchange version information */
+		binary.LittleEndian.PutUint32(payload, ProtocolVersionMajor)
+		binary.LittleEndian.PutUint32(payload[4:], minor)
+		binary.LittleEndian.PutUint32(payload[8:], SCardSuccess)
+		err = messageSendWithHeader(CommandVersion, conn, payload)
+		if err != nil {
+			return nil, err
+		}
+		n, err := conn.Read(response)
+		if err != nil {
+			return nil, err
+		}
+		if n != len(response) {
+			return nil, fmt.Errorf("invalid response length: expected %d, got %d", len(response), n)
+		}
+		code = binary.LittleEndian.Uint32(response[8:])
+		if code != SCardSuccess {
+			continue
+		}
+		client.major = binary.LittleEndian.Uint32(response)
+		client.minor = binary.LittleEndian.Uint32(response[4:])
+		if client.major != ProtocolVersionMajor || client.minor != minor {
+			continue
+		}
+		break
 	}
-	if n != len(response) {
-		return nil, fmt.Errorf("invalid response length: expected %d, got %d", len(response), n)
-	}
-	code := binary.LittleEndian.Uint32(response[8:])
+
 	if code != SCardSuccess {
 		return nil, fmt.Errorf("invalid response code: expected %d, got %d", SCardSuccess, code)
 	}
-	client.major = binary.LittleEndian.Uint32(response)
-	client.minor = binary.LittleEndian.Uint32(response[4:])
-	if client.major != ProtocolVersionMajor || client.minor != ProtocolVersionMinor {
+	if client.major != ProtocolVersionMajor || (client.minor != minor && client.minor+1 != minor) {
 		return nil, fmt.Errorf("invalid version found: expected %d.%d, got %d.%d", ProtocolVersionMajor, ProtocolVersionMinor, client.major, client.minor)
 	}
 
@@ -101,7 +114,7 @@ func EstablishContext(scope uint32) (*Client, error) {
 		return nil, err
 	}
 	response = make([]byte, 12)
-	n, err = conn.Read(response)
+	n, err := conn.Read(response)
 	if err != nil {
 		return nil, err
 	}
