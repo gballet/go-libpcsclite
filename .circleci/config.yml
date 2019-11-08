@@ -23,7 +23,6 @@ jobs:
       - run:
           name: Run the static checkers
           command: |
-            find /go -name "staticcheck"
             go vet
             /go/bin/staticcheck
 
