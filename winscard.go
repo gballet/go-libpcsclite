@@ -240,6 +240,8 @@ const (
 	SCardConnectReaderNameOffset        = 4
 	SCardConnectShareModeOffset         = SCardConnectReaderNameOffset + ReaderStateNameLength
 	SCardConnectPreferredProtocolOffset = SCardConnectShareModeOffset + 4
+	SCardConnectHandleOffset            = SCardConnectPreferredProtocolOffset + 4
+	SCardConnectActiveProtocolOffset    = SCardConnectHandleOffset + 4
 	SCardConnectReturnValueOffset       = SCardConnectPreferredProtocolOffset + 12
 )
 
@@ -280,8 +282,12 @@ func (client *Client) Connect(name string, shareMode uint32, preferredProtocol u
 	if code != SCardSuccess.Code() {
 		return nil, fmt.Errorf("invalid return code: %x (%v)", code, ErrorCode(code).Error())
 	}
-	handle := binary.LittleEndian.Uint32(response[140:])
-	active := binary.LittleEndian.Uint32(response[SCardConnectPreferredProtocolOffset:])
+	handle := binary.LittleEndian.Uint32(response[SCardConnectHandleOffset:])
+	// The SCARD_CONNECT response is laid out as dwShareMode(132),
+	// dwPreferredProtocols(136), hCard(140), dwActiveProtocol(144), rv(148).
+	// The active protocol must be read from offset 144, not 136 (which is the
+	// requested preferred-protocol mask, e.g. SCARD_PROTOCOL_T0|T1).
+	active := binary.LittleEndian.Uint32(response[SCardConnectActiveProtocolOffset:])
 
 	return &Card{handle: handle, activeProto: active, client: client}, nil
 }
@@ -319,7 +325,14 @@ func (card *Card) Transmit(adpu []byte) ([]byte, *SCardIoRequest, error) {
 
 	request := [TransmitRequestLength]byte{}
 	binary.LittleEndian.PutUint32(request[:], card.handle)
-	binary.LittleEndian.PutUint32(request[4:] /*card.activeProto*/, 2)
+	// Send the SCARD_IO_REQUEST for the protocol the card actually negotiated.
+	// Hardcoding T=1 here makes pcscd reject every transmit to a T=0 card with
+	// SCARD_E_PROTO_MISMATCH.
+	proto := card.activeProto
+	if proto != ProtocolT0 && proto != ProtocolT1 {
+		proto = ProtocolT1
+	}
+	binary.LittleEndian.PutUint32(request[4:], proto)
 	binary.LittleEndian.PutUint32(request[8:], 8)
 	binary.LittleEndian.PutUint32(request[12:], uint32(len(adpu)))
 	binary.LittleEndian.PutUint32(request[16:], 0)
