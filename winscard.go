@@ -413,3 +413,58 @@ func (card *Card) Disconnect(disposition uint32) error {
 
 	return nil
 }
+
+// BeginTransaction claims the card for exclusive use until EndTransaction is
+// called, so that other PC/SC clients cannot interleave commands with the
+// caller's. This corresponds to SCardBeginTransaction.
+func (card *Card) BeginTransaction() error {
+	card.client.mutex.Lock()
+	defer card.client.mutex.Unlock()
+
+	data := [8]byte{}
+	binary.LittleEndian.PutUint32(data[:], card.handle)
+	binary.LittleEndian.PutUint32(data[4:], SCardSuccess.Code())
+	if err := messageSendWithHeader(SCardBeginTransaction, card.client.conn, data[:]); err != nil {
+		return err
+	}
+	total := 0
+	for total < len(data) {
+		n, err := card.client.conn.Read(data[total:])
+		if err != nil {
+			return err
+		}
+		total += n
+	}
+	if code := binary.LittleEndian.Uint32(data[4:]); code != SCardSuccess.Code() {
+		return fmt.Errorf("invalid return code: %x (%v)", code, ErrorCode(code).Error())
+	}
+	return nil
+}
+
+// EndTransaction releases a transaction previously claimed with
+// BeginTransaction. disposition is one of LeaveCard, ResetCard, UnpowerCard or
+// EjectCard. This corresponds to SCardEndTransaction.
+func (card *Card) EndTransaction(disposition uint32) error {
+	card.client.mutex.Lock()
+	defer card.client.mutex.Unlock()
+
+	data := [12]byte{}
+	binary.LittleEndian.PutUint32(data[:], card.handle)
+	binary.LittleEndian.PutUint32(data[4:], disposition)
+	binary.LittleEndian.PutUint32(data[8:], SCardSuccess.Code())
+	if err := messageSendWithHeader(SCardEndTransaction, card.client.conn, data[:]); err != nil {
+		return err
+	}
+	total := 0
+	for total < len(data) {
+		n, err := card.client.conn.Read(data[total:])
+		if err != nil {
+			return err
+		}
+		total += n
+	}
+	if code := binary.LittleEndian.Uint32(data[8:]); code != SCardSuccess.Code() {
+		return fmt.Errorf("invalid return code: %x (%v)", code, ErrorCode(code).Error())
+	}
+	return nil
+}
